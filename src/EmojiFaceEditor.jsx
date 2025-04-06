@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import * as faceapi from "face-api.js";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 
 const PASSWORD = "kanai0";
 
@@ -11,12 +13,13 @@ export default function EmojiFaceEditor() {
 
   const [images, setImages] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [emoji, setEmoji] = useState("😎");
-  const [emojiList] = useState(["😂", "😊", "😉", "🤣", "😁", "😄", "😍", "😚", "😋", "🤩", "😎", "😳"]);
-  const [emojiOverlays, setEmojiOverlays] = useState([]);
-  const [undoStack, setUndoStack] = useState([]);
-  const canvasRef = useRef(null);
+  const [emojiList, setEmojiList] = useState(["😂", "😊", "😉", "🤣", "😁", "😄", "😍", "😚", "😋", "🤩", "😎", "😳"]);
+  const [selectedEmoji, setSelectedEmoji] = useState("😎");
+  const [overlays, setOverlays] = useState([]);
+  const [draggingIndex, setDraggingIndex] = useState(null);
+  const [saving, setSaving] = useState(false);
   const imageRef = useRef(null);
+  const canvasRef = useRef(null);
 
   useEffect(() => {
     const loadModels = async () => {
@@ -25,78 +28,168 @@ export default function EmojiFaceEditor() {
     };
     loadModels();
   }, []);
-
   const handleImageUpload = async (event) => {
     const files = Array.from(event.target.files);
     const imageUrls = await Promise.all(files.map((file) => URL.createObjectURL(file)));
     setImages(imageUrls);
     setCurrentIndex(0);
-    setEmojiOverlays([]);
+    setOverlays([]);
   };
 
   const detectFaces = async () => {
     const input = imageRef.current;
-    if (!input.complete || input.naturalWidth === 0) {
+    if (!input || !input.complete || input.naturalWidth === 0) {
       console.log("画像がまだ読み込まれていません。");
       return;
     }
-    console.log("画像サイズ:", input.naturalWidth, input.naturalHeight);
+
     const detections = await faceapi.detectAllFaces(input, new faceapi.TinyFaceDetectorOptions());
     console.log("顔検出結果:", detections);
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    canvas.width = input.naturalWidth;
-    canvas.height = input.naturalHeight;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(input, 0, 0, canvas.width, canvas.height);
-
-    const newOverlays = detections.map((det) => ({
-      x: det.box.x,
-      y: det.box.y,
-      size: det.box.width,
-      emoji: emoji,
+    const newOverlays = detections.map((d) => ({
+      x: d.box.x,
+      y: d.box.y,
+      size: d.box.width,
+      emoji: selectedEmoji,
+      id: Math.random().toString(36).substr(2, 9), // 一意なID
     }));
 
-    console.log("🎯 オーバーレイ:", newOverlays);
-    setEmojiOverlays(newOverlays);
-    setUndoStack([]);
+    setOverlays(newOverlays);
   };
 
-  const drawEmojis = () => {
+  const drawCanvas = () => {
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
     const img = imageRef.current;
+    if (!canvas || !img) return;
+
+    const ctx = canvas.getContext("2d");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    emojiOverlays.forEach((item) => {
-      ctx.font = `${item.size}px serif`;
-      ctx.fillText(item.emoji, item.x, item.y + item.size);
+    ctx.drawImage(img, 0, 0);
+
+    overlays.forEach((o) => {
+      ctx.font = `${o.size}px serif`;
+      ctx.fillText(o.emoji, o.x, o.y + o.size);
     });
-    console.log("🎨 drawEmojis() 実行中");
-    console.log("🧩 emojiOverlays:", emojiOverlays);
   };
 
   useEffect(() => {
-    if (imageRef.current && canvasRef.current && emojiOverlays.length > 0) {
-      drawEmojis();
+    if (imageRef.current && canvasRef.current) {
+      drawCanvas();
     }
-  }, [emojiOverlays]);
-
-  const handleUndo = () => {
-    if (emojiOverlays.length === 0) return;
-    const newOverlays = [...emojiOverlays];
-    const removed = newOverlays.pop();
-    setUndoStack((prev) => [...prev, removed]);
-    setEmojiOverlays(newOverlays);
+  }, [overlays, currentIndex]);
+  const handleMouseDown = (index) => {
+    setDraggingIndex(index);
   };
 
-  const handleDownload = () => {
+  const handleMouseUp = () => {
+    setDraggingIndex(null);
+  };
+
+  const handleMouseMove = (e) => {
+    if (draggingIndex === null) return;
     const canvas = canvasRef.current;
-    const link = document.createElement("a");
-    link.download = `edited-image-${currentIndex + 1}.png`;
-    link.href = canvas.toDataURL();
-    link.click();
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    setOverlays((prev) => {
+      const updated = [...prev];
+      updated[draggingIndex] = { ...updated[draggingIndex], x, y };
+      return updated;
+    });
+  };
+
+  const handleDeleteOverlay = (index) => {
+    setOverlays((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAddEmoji = () => {
+    setOverlays((prev) => [
+      ...prev,
+      {
+        x: 100,
+        y: 100,
+        size: 80,
+        emoji: selectedEmoji,
+        id: Math.random().toString(36).substr(2, 9),
+      },
+    ]);
+  };
+
+  const handleSizeChange = (index, delta) => {
+    setOverlays((prev) => {
+      const updated = [...prev];
+      updated[index].size = Math.max(20, updated[index].size + delta);
+      return updated;
+    });
+  };
+
+  const goToNext = () => {
+    if (currentIndex < images.length - 1) {
+      setCurrentIndex(currentIndex + 1);
+      setOverlays([]);
+    }
+  };
+
+  const goToPrev = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+      setOverlays([]);
+    }
+  };
+  const handleSaveCurrentImage = () => {
+    setSaving(true);
+    const canvas = document.createElement("canvas");
+    const img = imageRef.current;
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    overlays.forEach((o) => {
+      ctx.font = `${o.size}px serif`;
+      ctx.fillText(o.emoji, o.x, o.y + o.size);
+    });
+    canvas.toBlob((blob) => {
+      saveAs(blob, `image-${currentIndex + 1}.png`);
+      setSaving(false);
+    });
+  };
+
+  const handleSaveAllAsZip = () => {
+    const zip = new JSZip();
+    const promises = images.map((imgUrl, index) => {
+      return new Promise((resolve) => {
+        const canvas = document.createElement("canvas");
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = imgUrl;
+        img.onload = () => {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+
+          if (index === currentIndex) {
+            overlays.forEach((o) => {
+              ctx.font = `${o.size}px serif`;
+              ctx.fillText(o.emoji, o.x, o.y + o.size);
+            });
+          }
+
+          canvas.toBlob((blob) => {
+            zip.file(`image-${index + 1}.png`, blob);
+            resolve();
+          });
+        };
+      });
+    });
+
+    Promise.all(promises).then(() => {
+      zip.generateAsync({ type: "blob" }).then((content) => {
+        saveAs(content, "edited-images.zip");
+      });
+    });
   };
 
   const handleLogin = () => {
@@ -104,7 +197,7 @@ export default function EmojiFaceEditor() {
       localStorage.setItem("authenticated", "true");
       setIsAuthenticated(true);
     } else {
-      alert("パスワードが間違っています。");
+      alert("パスワードが違います");
     }
   };
 
@@ -137,55 +230,107 @@ export default function EmojiFaceEditor() {
       </div>
     );
   }
-
   return (
-    <div style={{ padding: "1rem", fontFamily: "Noto Sans JP" }}>
+    <div
+      style={{
+        fontFamily: "'Noto Sans JP', sans-serif",
+        backgroundColor: "#fff0f5",
+        padding: "1rem",
+        minHeight: "100vh",
+        boxSizing: "border-box",
+        textAlign: "center",
+      }}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+    >
       <input type="file" multiple accept="image/*" onChange={handleImageUpload} />
 
       {images.length > 0 && (
         <>
-          <div>
+          <div style={{ position: "relative", display: "inline-block", marginTop: "1rem" }}>
             <img
               src={images[currentIndex]}
               ref={imageRef}
-              alt="Uploaded"
-              style={{
-                maxWidth: "100%",
-                visibility: "hidden",
-                position: "absolute",
-                top: 0,
-                left: 0,
-                zIndex: -1,
-              }}
               onLoad={detectFaces}
+              alt="source"
+              style={{ maxWidth: "100%", display: "block" }}
             />
-            <canvas
-              ref={canvasRef}
-              style={{ maxWidth: "100%", border: "1px solid #ccc", marginTop: "1rem" }}
-            />
+            {overlays.map((o, i) => (
+              <div
+                key={o.id}
+                onMouseDown={() => handleMouseDown(i)}
+                style={{
+                  position: "absolute",
+                  top: o.y,
+                  left: o.x,
+                  fontSize: `${o.size}px`,
+                  cursor: "move",
+                  border: i === draggingIndex ? "2px solid #88f" : "none",
+                }}
+              >
+                {o.emoji}
+                <div>
+                  <button onClick={() => handleSizeChange(i, 10)}>＋</button>
+                  <button onClick={() => handleSizeChange(i, -10)}>−</button>
+                  <button onClick={() => handleDeleteOverlay(i)}>🗑</button>
+                </div>
+              </div>
+            ))}
           </div>
 
           <div style={{ marginTop: "1rem" }}>
             {emojiList.map((e) => (
               <button
                 key={e}
+                onClick={() => setSelectedEmoji(e)}
                 style={{
+                  fontSize: "1.5rem",
                   margin: "0.25rem",
                   padding: "0.5rem",
-                  backgroundColor: emoji === e ? "#ffddee" : "#fff",
-                  borderRadius: "8px",
+                  backgroundColor: selectedEmoji === e ? "#ffddee" : "#fff",
                   border: "1px solid #ccc",
+                  borderRadius: "8px",
+                  cursor: "pointer",
                 }}
-                onClick={() => setEmoji(e)}
               >
                 {e}
               </button>
             ))}
+            <button
+              onClick={handleAddEmoji}
+              style={{
+                fontSize: "1.5rem",
+                margin: "0.25rem",
+                padding: "0.5rem 1rem",
+                backgroundColor: "#ffcccc",
+                border: "1px solid #ccc",
+                borderRadius: "8px",
+                cursor: "pointer",
+              }}
+            >
+              ＋
+            </button>
           </div>
 
           <div style={{ marginTop: "1rem" }}>
-            <button onClick={handleUndo} style={{ marginRight: "1rem" }}>戻す</button>
-            <button onClick={handleDownload}>保存</button>
+            <button onClick={goToPrev} disabled={currentIndex === 0}>
+              ◀ 前へ
+            </button>
+            <span style={{ margin: "0 1rem" }}>
+              {currentIndex + 1} / {images.length}
+            </span>
+            <button onClick={goToNext} disabled={currentIndex === images.length - 1}>
+              次へ ▶
+            </button>
+          </div>
+
+          <div style={{ marginTop: "1rem" }}>
+            <button onClick={handleSaveCurrentImage} disabled={saving}>
+              {saving ? "保存中..." : "保存"}
+            </button>
+            <button onClick={handleSaveAllAsZip} style={{ marginLeft: "1rem" }}>
+              ZIP保存
+            </button>
           </div>
         </>
       )}
