@@ -1,0 +1,67 @@
+body {
+  margin: 0;
+  font-family: 'Noto Sans JP', sans-serif;
+  background-color: #fff0f5; /* ピンク系背景 */
+  color: #333;
+}
+
+button {
+  font-size: 1.1rem;
+  padding: 0.6rem 1rem;
+  border: none;
+  border-radius: 12px;
+  background-color: #ffcce0;
+  color: #333;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin: 0.3rem;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+button:hover {
+  background-color: #ffb3cc;
+}
+
+button:disabled {
+  background-color: #eee;
+  color: #aaa;
+  cursor: not-allowed;
+}
+
+input[type="file"] {
+  font-size: 1rem;
+  margin: 1rem 0;
+}
+
+img {
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 1rem;
+  gap: 0.5rem;
+}
+
+.emoji-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 1.5rem;
+}
+
+.emoji-list button {
+  font-size: 1.5rem;
+  padding: 0.5rem;
+  width: 48px;
+  height: 48px;
+}
+
+.image-wrapper {
+  position: relative;
+  display: inline-block;
+  margin-top: 2rem;
+}
